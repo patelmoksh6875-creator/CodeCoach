@@ -1,72 +1,73 @@
 import React, { useState } from 'react';
+import { Sparkles, Loader2 } from 'lucide-react';
+
+const STARTERS = ['A calculator', 'A to-do list', 'A tip splitter', 'A color picker'];
 
 interface ProjectLauncherProps {
-  onGenerate: (prompt: string) => void;
-  isLoading: boolean;
+  onGenerate: (idea: string) => void;
+  isGenerating: boolean;
+  error: string | null;
 }
 
-export const ProjectLauncher: React.FC<ProjectLauncherProps> = ({ onGenerate, isLoading }) => {
-  const [prompt, setPrompt] = useState('');
+/** The "what do you want to build?" input + quick starters. */
+export function ProjectLauncher({ onGenerate, isGenerating, error }: ProjectLauncherProps) {
+  const [idea, setIdea] = useState('');
 
-  const suggestions = [
-    'Build a basic calculator',
-    'Build a interactive to-do list',
-    'Build a digital clock with alarm',
-    'Build a simple memory flashcard game',
-  ];
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (prompt.trim() && !isLoading) {
-      onGenerate(prompt.trim());
-    }
+  const submit = () => {
+    if (!idea.trim() || isGenerating) return;
+    onGenerate(idea.trim());
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl max-w-2xl w-full mx-auto">
-      <h2 className="text-xl font-bold text-slate-100 mb-2">What do you want to build today?</h2>
-      <p className="text-xs text-slate-400 mb-6">
-        CodeCoach will generate a lightweight starter app and guide you through understanding how it works.
-      </p>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="relative">
-          <input
-            type="text"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="e.g., Build a weather app using fake data..."
-            disabled={isLoading}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-          <button
-            type="submit"
-            disabled={!prompt.trim() || isLoading}
-            className="absolute right-2 top-2 bottom-2 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium text-xs rounded-lg transition-colors flex items-center space-x-1"
-          >
-            {isLoading ? <span>Generating...</span> : <span>Build & Learn →</span>}
-          </button>
+    <div className="flex min-h-[70vh] flex-col items-center justify-center px-4">
+      <div className="w-full max-w-xl">
+        <div className="mb-6 text-center">
+          <h1 className="mb-2 text-2xl font-semibold text-neutral-100">What do you want to build?</h1>
+          <p className="text-sm text-neutral-500">
+            Describe an app idea. CodeCoach generates it, then teaches you to read it.
+          </p>
         </div>
-      </form>
 
-      <div className="mt-6 pt-4 border-t border-slate-800/60">
-        <span className="text-xs text-slate-500 font-medium">Quick Starters:</span>
-        <div className="flex flex-wrap gap-2 mt-2">
-          {suggestions.map((suggestion) => (
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
+          <textarea
+            value={idea}
+            onChange={(e) => setIdea(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="a calculator, a to-do list, a pomodoro timer..."
+            rows={3}
+            className="w-full resize-none bg-transparent text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
+          />
+          <div className="flex justify-end">
             <button
-              key={suggestion}
-              onClick={() => {
-                setPrompt(suggestion);
-                onGenerate(suggestion);
-              }}
-              disabled={isLoading}
-              className="text-xs bg-slate-800/60 hover:bg-slate-800 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700/50 transition-colors"
+              onClick={submit}
+              disabled={isGenerating || !idea.trim()}
+              className="flex items-center gap-2 rounded bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-900 hover:bg-white disabled:opacity-40"
             >
-              {suggestion}
+              {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {isGenerating ? 'Generating…' : 'Build it'}
+            </button>
+          </div>
+        </div>
+
+        {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {STARTERS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setIdea(s)}
+              className="rounded-full border border-neutral-800 px-3 py-1 text-xs text-neutral-400 hover:border-neutral-600 hover:text-neutral-200"
+            >
+              {s}
             </button>
           ))}
         </div>
       </div>
     </div>
   );
-};
+}
