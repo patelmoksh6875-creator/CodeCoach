@@ -145,6 +145,25 @@ interface WorkspaceProps {
 function Workspace({ project, onExit, savedProjects, onSelectSaved, onImportFolder, onDeleteSaved }: WorkspaceProps) {
   return (
     <div className="fixed inset-0 z-30 flex flex-col bg-neutral-950">
+      {/* Sandpack's own internal editor/preview wrapper (.sp-stack) defaults to
+          min-height: auto, which lets it grow to fit the ENTIRE file instead of
+          respecting the height its flex parent gives it — that's what was
+          producing "only the first ~30 lines, can't scroll further": the outer
+          layout was sized correctly, but CodeMirror's own scroller had no
+          constrained height to scroll within. Force it down to 0 so the normal
+          flex:1/min-h-0 chain we already set up actually reaches CodeMirror. */}
+      <style>{`
+        .sp-layout .sp-stack, .sp-code-editor, .sp-cm, .cm-editor { min-height: 0 !important; }
+        @keyframes cc-blink {
+          0%, 100% { background-color: rgba(251,191,36,0.32); }
+          50% { background-color: rgba(251,191,36,0.04); }
+        }
+        .cc-anchor-blink {
+          animation: cc-blink 1s ease-in-out infinite;
+          outline: 1px solid rgba(251,191,36,0.65);
+          border-radius: 2px;
+        }
+      `}</style>
       <div className="flex items-center gap-3 border-b border-neutral-800 px-4 py-2.5">
         <button
           onClick={onExit}
@@ -203,6 +222,7 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
     window.clearTimeout(editDebounceRef.current);
     editDebounceRef.current = window.setTimeout(() => {
       coach.watchEdit(code);
+      updateGhostOverlay();
     }, EDIT_DEBOUNCE_MS);
     return () => window.clearTimeout(editDebounceRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -242,35 +262,102 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
     coach.requestDebugHints(sandpackError.message, code);
   };
 
-  // --- Tutor mode: scroll to + highlight a target line inside the live CodeMirror editor ---
-  const highlightAnchorInEditor = useCallback((anchor: string) => {
-    if (!editorRef.current || !anchor.trim()) return;
+  // --- Tutor mode: automatically (never button-gated) scroll to + blink-highlight the
+  //     target line for the current step, and show a ghost-text preview of the code to
+  //     type that shrinks as the learner actually types it in. ---
+  const [ghost, setGhost] = useState<{ text: string; top: number; left: number } | null>(null);
+  const tutorFocusRef = useRef<{ anchor: string; codeHint: string } | null>(null);
 
-    if (highlightRef.current) {
-      highlightRef.current.el.style.cssText = highlightRef.current.original;
-      highlightRef.current = null;
-    }
-    window.clearTimeout(highlightTimeoutRef.current);
-
+  const locateAnchorLine = useCallback((anchor: string): HTMLElement | null => {
+    if (!editorRef.current) return null;
     const needle = anchor.trim().split('\n')[0].trim();
-    if (!needle) return;
-
+    if (!needle) return null;
     const lines = Array.from(editorRef.current.querySelectorAll('.cm-line')) as HTMLElement[];
-    const match = lines.find((line) => {
-      const text = line.textContent?.trim() ?? '';
-      return text.length > 0 && (text.includes(needle) || needle.includes(text));
-    });
-    if (!match) return;
+    return (
+      lines.find((line) => {
+        const text = line.textContent?.trim() ?? '';
+        return text.length > 0 && (text.includes(needle) || needle.includes(text));
+      }) ?? null
+    );
+  }, []);
 
-    match.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    const original = match.style.cssText;
-    match.style.cssText += 'background-color: rgba(251,191,36,0.22); outline: 1px solid rgba(251,191,36,0.65); border-radius: 2px;';
-    highlightRef.current = { el: match, original };
+  const applyBlinkHighlight = useCallback((match: HTMLElement) => {
+    if (highlightRef.current && highlightRef.current.el !== match) {
+      highlightRef.current.el.classList.remove('cc-anchor-blink');
+    }
+    match.classList.add('cc-anchor-blink');
+    highlightRef.current = { el: match, original: '' };
+    window.clearTimeout(highlightTimeoutRef.current);
     highlightTimeoutRef.current = window.setTimeout(() => {
-      match.style.cssText = original;
-      highlightRef.current = null;
+      match.classList.remove('cc-anchor-blink');
+      if (highlightRef.current?.el === match) highlightRef.current = null;
     }, HIGHLIGHT_DURATION_MS);
   }, []);
+
+  /** Recomputes the ghost-text overlay from the CURRENT code — called on every edit so
+   *  the ghost shrinks letter by letter as the learner types the target text in, and
+   *  disappears entirely once it's fully typed. */
+  const updateGhostOverlay = useCallback(() => {
+    const focus = tutorFocusRef.current;
+    if (!focus || !focus.codeHint) {
+      setGhost(null);
+      return;
+    }
+    const idx = code.indexOf(focus.anchor);
+    if (idx === -1) {
+      setGhost(null);
+      return;
+    }
+    const after = code.slice(idx + focus.anchor.length).replace(/^[ \t]*\n?/, '');
+    const target = focus.codeHint;
+    let matchLen = 0;
+    while (matchLen < target.length && matchLen < after.length && target[matchLen] === after[matchLen]) {
+      matchLen++;
+    }
+    const remainder = target.slice(matchLen);
+    if (!remainder) {
+      setGhost(null);
+      return;
+    }
+
+    const match = locateAnchorLine(focus.anchor);
+    if (!match || !editorRef.current) {
+      setGhost(null);
+      return;
+    }
+    const lineRect = match.getBoundingClientRect();
+    const containerRect = editorRef.current.getBoundingClientRect();
+    setGhost({
+      text: remainder,
+      top: lineRect.bottom - containerRect.top,
+      left: lineRect.left - containerRect.left,
+    });
+  }, [code, locateAnchorLine]);
+
+  /** Passed to GuidedBuildPanel; fires automatically as the tutor moves between steps —
+   *  never requires a click. */
+  const focusTutorStep = useCallback(
+    (anchor: string | undefined, codeHint: string | undefined) => {
+      window.clearTimeout(highlightTimeoutRef.current);
+      if (highlightRef.current) {
+        highlightRef.current.el.classList.remove('cc-anchor-blink');
+        highlightRef.current = null;
+      }
+      if (!anchor) {
+        tutorFocusRef.current = null;
+        setGhost(null);
+        return;
+      }
+      tutorFocusRef.current = { anchor, codeHint: codeHint ?? '' };
+      const match = locateAnchorLine(anchor);
+      if (match) {
+        match.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        applyBlinkHighlight(match);
+      }
+      updateGhostOverlay();
+    },
+    [locateAnchorLine, applyBlinkHighlight, updateGhostOverlay]
+  );
 
   // --- Guided build: "push it for me" writes the AI's implementation straight into Sandpack ---
   const applyGuidedBuildNow = useCallback(async () => {
@@ -284,8 +371,16 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
   }, [sandpack, coach]);
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <div className="flex flex-1 flex-col overflow-hidden" ref={editorRef}>
+    <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden" ref={editorRef}>
+        {ghost && (
+          <div
+            className="pointer-events-none absolute z-10 whitespace-pre font-mono text-sm italic text-neutral-500"
+            style={{ top: ghost.top + 2, left: ghost.left }}
+          >
+            {ghost.text}
+          </div>
+        )}
         {sandpackError && (
           <div className="flex items-center justify-between gap-3 border-b border-red-900/60 bg-red-950/40 px-4 py-2">
             <div className="flex items-center gap-2 text-xs text-red-300">
@@ -346,7 +441,7 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
           onApply={applyGuidedBuildNow}
           onStartTutor={coach.startGuidedTutor}
           onClose={coach.dismissGuidedPlan}
-          onHighlightAnchor={highlightAnchorInEditor}
+          onStepFocus={focusTutorStep}
         />
       )}
 

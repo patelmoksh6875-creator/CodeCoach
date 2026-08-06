@@ -10,8 +10,10 @@ interface GuidedBuildPanelProps {
   onApply: () => void;
   onStartTutor: () => void;
   onClose: () => void;
-  /** Called whenever the tutor should point at a location in the live editor. */
-  onHighlightAnchor: (anchor: string) => void;
+  /** Called automatically whenever the tutor moves to a step — never gated behind a
+   *  button press. Pass undefined/'' for anchor/codeHint to clear focus (e.g. on close
+   *  or once a step has no more code to point at). */
+  onStepFocus: (anchor: string | undefined, codeHint: string | undefined) => void;
 }
 
 /**
@@ -27,11 +29,18 @@ export function GuidedBuildPanel({
   onApply,
   onStartTutor,
   onClose,
-  onHighlightAnchor,
+  onStepFocus,
 }: GuidedBuildPanelProps) {
   if (mode === 'tutor') {
     return (
-      <TutorStepper plan={plan} onClose={onClose} onHighlightAnchor={onHighlightAnchor} />
+      <TutorStepper
+        plan={plan}
+        onClose={() => {
+          onStepFocus(undefined, undefined);
+          onClose();
+        }}
+        onStepFocus={onStepFocus}
+      />
     );
   }
 
@@ -81,21 +90,27 @@ export function GuidedBuildPanel({
 function TutorStepper({
   plan,
   onClose,
-  onHighlightAnchor,
+  onStepFocus,
 }: {
   plan: GuidedBuildPlan;
   onClose: () => void;
-  onHighlightAnchor: (anchor: string) => void;
+  onStepFocus: (anchor: string | undefined, codeHint: string | undefined) => void;
 }) {
   const [index, setIndex] = useState(0);
   const [showFinal, setShowFinal] = useState(false);
   const step = plan.steps[index];
   const isLast = index === plan.steps.length - 1;
 
+  // Fires automatically on mount and every time the step changes — never requires a
+  // click. Clears focus once the learner reaches the "finished feature" summary.
   useEffect(() => {
-    if (step?.targetAnchor) onHighlightAnchor(step.targetAnchor);
+    if (showFinal) {
+      onStepFocus(undefined, undefined);
+    } else {
+      onStepFocus(step?.targetAnchor || undefined, step?.codeHint || undefined);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index]);
+  }, [index, showFinal]);
 
   return (
     <div className="fixed bottom-6 right-6 z-50 w-full max-w-sm rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl">
@@ -120,12 +135,7 @@ function TutorStepper({
               </pre>
             )}
             {step.targetAnchor && (
-              <button
-                onClick={() => onHighlightAnchor(step.targetAnchor!)}
-                className="mt-2 text-xs text-blue-400 hover:text-blue-300"
-              >
-                Show me where in the editor
-              </button>
+              <p className="mt-2 text-xs text-blue-400">Highlighted in the editor now.</p>
             )}
           </>
         ) : (

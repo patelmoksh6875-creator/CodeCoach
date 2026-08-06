@@ -68,7 +68,7 @@ export class ProjectStore {
       // strip the top-level folder name so paths are rooted at "/", matching Sandpack's format
       const withoutRoot = relative.split('/').slice(1).join('/');
       const path = '/' + (withoutRoot || file.name);
-      files[path] = await file.text();
+      files[path] = this.sanitizeForSandpack(await file.text());
     }
 
     return {
@@ -85,5 +85,25 @@ export class ProjectStore {
     }
     const firstSourceFile = Object.keys(files).find((p) => /\.(jsx?|tsx?)$/.test(p));
     return firstSourceFile ?? Object.keys(files)[0];
+  }
+
+  /**
+   * Sandpack's default "react" template transpiles and runs files as plain scripts,
+   * not real ES modules — so any `import.meta` reference (extremely common in
+   * real-world Vite projects, e.g. `import.meta.env.VITE_*`, `import.meta.hot`,
+   * `import.meta.url`) is a hard "Cannot use 'import.meta' outside a module" crash
+   * at runtime, not a warning. Imported folders are exactly the case where this bites
+   * (AI-generated projects never emit it, since the generation prompt forbids it).
+   * Strip/stub it out so an imported real project can at least run inside the sandbox,
+   * rather than crashing the whole preview on files that may not even be the active one.
+   */
+  private sanitizeForSandpack(source: string): string {
+    return source
+      .replace(/import\.meta\.env\.[A-Za-z_$][\w$]*/g, 'undefined')
+      .replace(/import\.meta\.env/g, '({})')
+      .replace(/import\.meta\.hot/g, 'undefined')
+      .replace(/import\.meta\.url/g, '""')
+      .replace(/import\.meta\.glob\([^)]*\)/g, '({})')
+      .replace(/import\.meta/g, '({})');
   }
 }
