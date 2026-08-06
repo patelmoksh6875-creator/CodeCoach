@@ -77,13 +77,34 @@ present) should be at most a short illustrative fragment (a function signature, 
 one-line pattern), never the complete working solution. Only "finalSolutionNote" may
 describe, in prose (not full code), what the finished feature roughly looks like, and
 only for after they've worked through every step.
+For each step, if it relates to a specific existing line or block already in the file,
+set "targetAnchor" to a short near-verbatim excerpt (a few words to one full line) of
+that exact existing text, copied character-for-character from the file contents you
+were given, so it can be located in the editor. Omit "targetAnchor" (or leave it an
+empty string) if the step is about adding something new rather than pointing at
+existing code.
 Respond with ONLY a JSON object, no markdown fences, shaped EXACTLY like this:
 {
   "featureSummary": string,
   "steps": [
-    { "stepNumber": number, "title": string, "guidance": string, "codeHint": string }
+    { "stepNumber": number, "title": string, "guidance": string, "codeHint": string, "targetAnchor": string }
   ],
   "finalSolutionNote": string
+}`;
+
+export const GUIDED_BUILD_APPLY_SYSTEM_PROMPT = `You are implementing a feature request directly into an existing small React app (the
+learner has chosen to have you write it for them instead of being guided through it
+themselves). You are given the feature request, the guided plan that was already shown
+to them (for context on scope), and the full current contents of every file. Write the
+complete, working, updated contents of every file that needs to change. Follow the
+same code-style constraints the app was originally generated under: plain React with
+explicit imports (this runs in a real bundler, not a global-script runtime), inline
+styles only, no CSS files, no UI libraries, visible background/text colors.
+Respond with ONLY a JSON object, no markdown fences, shaped EXACTLY like this:
+{
+  "changeSummary": string,               // one or two sentences on what changed
+  "updatedFiles": { "/App.js": string }  // path -> FULL new file contents, only
+                                          // files that actually changed
 }`;
 
 export const SESSION_SUMMARY_SYSTEM_PROMPT = `You are summarizing a learner's coding session for them, based on a list of activity

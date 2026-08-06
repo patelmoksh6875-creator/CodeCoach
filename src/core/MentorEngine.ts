@@ -4,13 +4,16 @@ import {
   DEBUG_HINTS_SYSTEM_PROMPT,
   BREAK_MODE_SYSTEM_PROMPT,
   GUIDED_BUILD_SYSTEM_PROMPT,
+  GUIDED_BUILD_APPLY_SYSTEM_PROMPT,
 } from '../prompts/prompts';
 import type {
   ExplanationResult,
   HintSequence,
   BreakModeChallenge,
   GuidedBuildPlan,
+  GuidedBuildImplementation,
 } from '../types/coach';
+import type { FileMap } from '../types/project';
 
 /** All the "coach reacting to what the learner is doing" AI calls, grouped in one class. */
 export class MentorEngine {
@@ -41,6 +44,21 @@ export class MentorEngine {
     return this.ai.completeJSON<GuidedBuildPlan>(
       GUIDED_BUILD_SYSTEM_PROMPT,
       `The learner wants to add: "${featureRequest}"\n\nCurrent file contents:\n\`\`\`\n${fileContents}\n\`\`\``
+    );
+  }
+
+  /** Used when the learner picks "apply this for me" instead of the guided walkthrough. */
+  async applyGuidedBuild(
+    featureRequest: string,
+    plan: GuidedBuildPlan,
+    files: FileMap
+  ): Promise<GuidedBuildImplementation> {
+    const filesBlock = Object.entries(files)
+      .map(([path, contents]) => `--- ${path} ---\n${contents}`)
+      .join('\n\n');
+    return this.ai.completeJSON<GuidedBuildImplementation>(
+      GUIDED_BUILD_APPLY_SYSTEM_PROMPT,
+      `Feature request: "${featureRequest}"\n\nGuided plan already shown to the learner: ${plan.featureSummary}\n\nCurrent files:\n${filesBlock}`
     );
   }
 }

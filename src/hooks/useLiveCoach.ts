@@ -7,8 +7,12 @@ import type {
   HintSequence,
   BreakModeChallenge,
   GuidedBuildPlan,
+  GuidedBuildImplementation,
   LiveEditFeedback,
 } from '../types/coach';
+import type { FileMap } from '../types/project';
+
+export type GuidedBuildMode = 'choice' | 'tutor' | null;
 
 let interventionCounter = 0;
 function nextId(): string {
@@ -34,6 +38,9 @@ export function useLiveCoach({ projectTitle, onNeedsApiKey }: UseLiveCoachOption
   const [debugHints, setDebugHints] = useState<HintSequence | null>(null);
   const [breakChallenge, setBreakChallenge] = useState<BreakModeChallenge | null>(null);
   const [guidedPlan, setGuidedPlan] = useState<GuidedBuildPlan | null>(null);
+  const [guidedMode, setGuidedMode] = useState<GuidedBuildMode>(null);
+  const [guidedFeatureRequest, setGuidedFeatureRequest] = useState<string>('');
+  const [isApplyingGuided, setIsApplyingGuided] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
 
@@ -128,6 +135,8 @@ export function useLiveCoach({ projectTitle, onNeedsApiKey }: UseLiveCoachOption
       try {
         const plan = await services.mentor.createGuidedBuildPlan(featureRequest, fileContents);
         setGuidedPlan(plan);
+        setGuidedMode('choice');
+        setGuidedFeatureRequest(featureRequest);
         services.log.record({ timestamp: Date.now(), type: 'guided_build', details: `Guided build: ${plan.featureSummary}` });
         pushIntervention({ type: 'guided_build', title: 'Guided plan ready', message: plan.featureSummary });
       } catch (err) {
@@ -138,6 +147,33 @@ export function useLiveCoach({ projectTitle, onNeedsApiKey }: UseLiveCoachOption
     },
     [pushIntervention, handleAIError]
   );
+
+  /** "Apply this for me" — has the AI implement the plan directly. Returns the result
+   *  so the caller (which owns the Sandpack file state) can write it in; doesn't touch
+   *  Sandpack itself since this hook has no editor access. */
+  const applyGuidedBuild = useCallback(
+    async (files: FileMap): Promise<GuidedBuildImplementation | null> => {
+      if (!guidedPlan) return null;
+      setIsApplyingGuided(true);
+      setLastError(null);
+      try {
+        const result = await services.mentor.applyGuidedBuild(guidedFeatureRequest, guidedPlan, files);
+        services.log.record({ timestamp: Date.now(), type: 'guided_build', details: `Applied: ${result.changeSummary}` });
+        pushIntervention({ type: 'guided_build', title: 'Feature applied', message: result.changeSummary });
+        setGuidedPlan(null);
+        setGuidedMode(null);
+        return result;
+      } catch (err) {
+        handleAIError(err, 'Apply guided build');
+        return null;
+      } finally {
+        setIsApplyingGuided(false);
+      }
+    },
+    [guidedPlan, guidedFeatureRequest, pushIntervention, handleAIError]
+  );
+
+  const startGuidedTutor = useCallback(() => setGuidedMode('tutor'), []);
 
   /** Call with the full current file contents on every debounced edit tick. */
   const watchEdit = useCallback(
@@ -166,6 +202,8 @@ export function useLiveCoach({ projectTitle, onNeedsApiKey }: UseLiveCoachOption
     debugHints,
     breakChallenge,
     guidedPlan,
+    guidedMode,
+    isApplyingGuided,
     isBusy,
     lastError,
     requestExplanation,
@@ -175,7 +213,12 @@ export function useLiveCoach({ projectTitle, onNeedsApiKey }: UseLiveCoachOption
     triggerBreakMode,
     resolveBreakMode,
     requestGuidedBuild,
-    dismissGuidedPlan: () => setGuidedPlan(null),
+    applyGuidedBuild,
+    startGuidedTutor,
+    dismissGuidedPlan: () => {
+      setGuidedPlan(null);
+      setGuidedMode(null);
+    },
     watchEdit,
     primeEditSnapshot,
   };

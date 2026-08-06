@@ -3,7 +3,6 @@ import {
   SandpackProvider,
   SandpackLayout,
   SandpackCodeEditor,
-  SandpackPreview,
   SandpackFileExplorer,
   useSandpack,
   useActiveCode,
@@ -11,17 +10,22 @@ import {
 import { AlertTriangle, ArrowLeft } from 'lucide-react';
 import { services } from '../core/services';
 import { MissingApiKeyError, AIRequestError } from '../core/AIService';
+import type { SavedProjectRecord } from '../core/ProjectStore';
 import { useLiveCoach } from '../hooks/useLiveCoach';
 import { ProjectLauncher } from '../components/dashboard/ProjectLauncher';
+import { ProjectSwitcher } from '../components/dashboard/ProjectSwitcher';
 import { ApiKeyModal } from '../components/common/ApiKeyModal';
 import { CoachPanel } from '../components/coach/CoachPanel';
 import { ExplainDrawer } from '../components/coach/ExplainDrawer';
 import { BreakMode } from '../components/coach/BreakMode';
 import { ProgressiveReveal } from '../components/coach/HintSystem';
-import type { GeneratedProject } from '../types/project';
+import { GuidedBuildPanel } from '../components/coach/GuidedBuildPanel';
+import { FloatingPreview } from '../components/preview/FloatingPreview';
+import type { FileMap, GeneratedProject } from '../types/project';
 
 const EDIT_DEBOUNCE_MS = 500;
 const EXPLAIN_DEBOUNCE_MS = 450;
+const HIGHLIGHT_DURATION_MS = 4000;
 
 export function Dashboard() {
   const [project, setProject] = useState<GeneratedProject | null>(null);
@@ -29,6 +33,9 @@ export function Dashboard() {
   const [genError, setGenError] = useState<string | null>(null);
   const [needsApiKey, setNeedsApiKey] = useState(false);
   const [pendingIdea, setPendingIdea] = useState<string | null>(null);
+  const [savedProjects, setSavedProjects] = useState<SavedProjectRecord[]>(() => services.projects.list());
+
+  const refreshSaved = useCallback(() => setSavedProjects(services.projects.list()), []);
 
   const generate = useCallback(async (idea: string) => {
     if (!services.ai.hasApiKey()) {
@@ -40,6 +47,8 @@ export function Dashboard() {
     setGenError(null);
     try {
       const result = await services.generator.generate(idea);
+      services.projects.save(result, 'generated');
+      refreshSaved();
       setProject(result);
     } catch (err) {
       if (err instanceof MissingApiKeyError) {
@@ -51,7 +60,7 @@ export function Dashboard() {
     } finally {
       setIsGenerating(false);
     }
-  }, []);
+  }, [refreshSaved]);
 
   const handleApiKeySubmit = useCallback(
     (key: string) => {
@@ -66,9 +75,44 @@ export function Dashboard() {
     [pendingIdea, generate]
   );
 
+  const handleImportFolder = useCallback(
+    async (fileList: FileList) => {
+      try {
+        const title = window.prompt('Name this project', 'Imported project') || 'Imported project';
+        const imported = await services.projects.importFromFileList(fileList, title);
+        services.projects.save(imported, 'imported');
+        refreshSaved();
+        setProject(imported);
+      } catch (err) {
+        setGenError(err instanceof Error ? err.message : 'Import failed.');
+      }
+    },
+    [refreshSaved]
+  );
+
+  const handleSelectSaved = useCallback((record: SavedProjectRecord) => {
+    setProject(record.project);
+  }, []);
+
+  const handleDeleteSaved = useCallback(
+    (id: string) => {
+      services.projects.remove(id);
+      refreshSaved();
+    },
+    [refreshSaved]
+  );
+
   if (!project) {
     return (
       <>
+        <div className="flex justify-center px-4 pt-4">
+          <ProjectSwitcher
+            savedProjects={savedProjects}
+            onSelect={handleSelectSaved}
+            onImportFolder={handleImportFolder}
+            onDelete={handleDeleteSaved}
+          />
+        </div>
         <ProjectLauncher onGenerate={generate} isGenerating={isGenerating} error={genError} />
         {needsApiKey && (
           <ApiKeyModal onSubmit={handleApiKeySubmit} onCancel={() => setNeedsApiKey(false)} />
@@ -77,10 +121,28 @@ export function Dashboard() {
     );
   }
 
-  return <Workspace project={project} onExit={() => setProject(null)} />;
+  return (
+    <Workspace
+      project={project}
+      onExit={() => setProject(null)}
+      savedProjects={savedProjects}
+      onSelectSaved={handleSelectSaved}
+      onImportFolder={handleImportFolder}
+      onDeleteSaved={handleDeleteSaved}
+    />
+  );
 }
 
-function Workspace({ project, onExit }: { project: GeneratedProject; onExit: () => void }) {
+interface WorkspaceProps {
+  project: GeneratedProject;
+  onExit: () => void;
+  savedProjects: SavedProjectRecord[];
+  onSelectSaved: (record: SavedProjectRecord) => void;
+  onImportFolder: (fileList: FileList) => void;
+  onDeleteSaved: (id: string) => void;
+}
+
+function Workspace({ project, onExit, savedProjects, onSelectSaved, onImportFolder, onDeleteSaved }: WorkspaceProps) {
   return (
     <div className="fixed inset-0 z-30 flex flex-col bg-neutral-950">
       <div className="flex items-center gap-3 border-b border-neutral-800 px-4 py-2.5">
@@ -92,7 +154,15 @@ function Workspace({ project, onExit }: { project: GeneratedProject; onExit: () 
           Back
         </button>
         <div className="text-sm font-medium text-neutral-100">{project.title}</div>
-        <div className="text-xs text-neutral-500">{project.description}</div>
+        <div className="hidden text-xs text-neutral-500 sm:block">{project.description}</div>
+        <div className="ml-auto">
+          <ProjectSwitcher
+            savedProjects={savedProjects}
+            onSelect={onSelectSaved}
+            onImportFolder={onImportFolder}
+            onDelete={onDeleteSaved}
+          />
+        </div>
       </div>
 
       <SandpackProvider
@@ -112,6 +182,8 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
   const { sandpack } = useSandpack();
   const { code } = useActiveCode();
   const editorRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<{ el: HTMLElement; original: string } | null>(null);
+  const highlightTimeoutRef = useRef<number | undefined>(undefined);
 
   const coach = useLiveCoach({
     projectTitle: project.title,
@@ -170,6 +242,47 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
     coach.requestDebugHints(sandpackError.message, code);
   };
 
+  // --- Tutor mode: scroll to + highlight a target line inside the live CodeMirror editor ---
+  const highlightAnchorInEditor = useCallback((anchor: string) => {
+    if (!editorRef.current || !anchor.trim()) return;
+
+    if (highlightRef.current) {
+      highlightRef.current.el.style.cssText = highlightRef.current.original;
+      highlightRef.current = null;
+    }
+    window.clearTimeout(highlightTimeoutRef.current);
+
+    const needle = anchor.trim().split('\n')[0].trim();
+    if (!needle) return;
+
+    const lines = Array.from(editorRef.current.querySelectorAll('.cm-line')) as HTMLElement[];
+    const match = lines.find((line) => {
+      const text = line.textContent?.trim() ?? '';
+      return text.length > 0 && (text.includes(needle) || needle.includes(text));
+    });
+    if (!match) return;
+
+    match.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const original = match.style.cssText;
+    match.style.cssText += 'background-color: rgba(251,191,36,0.22); outline: 1px solid rgba(251,191,36,0.65); border-radius: 2px;';
+    highlightRef.current = { el: match, original };
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      match.style.cssText = original;
+      highlightRef.current = null;
+    }, HIGHLIGHT_DURATION_MS);
+  }, []);
+
+  // --- Guided build: "push it for me" writes the AI's implementation straight into Sandpack ---
+  const applyGuidedBuildNow = useCallback(async () => {
+    const currentFiles: FileMap = Object.fromEntries(
+      Object.entries(sandpack.files).map(([path, file]) => [path, file.code])
+    );
+    const result = await coach.applyGuidedBuild(currentFiles);
+    if (result) {
+      sandpack.updateFile(result.updatedFiles, undefined, true);
+    }
+  }, [sandpack, coach]);
+
   return (
     <div className="flex flex-1 overflow-hidden">
       <div className="flex flex-1 flex-col overflow-hidden" ref={editorRef}>
@@ -191,7 +304,6 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
         <SandpackLayout style={{ flex: 1, minHeight: 0, border: 'none' }}>
           <SandpackFileExplorer style={{ height: '100%' }} />
           <SandpackCodeEditor style={{ height: '100%' }} showTabs showLineNumbers />
-          <SandpackPreview style={{ height: '100%' }} showNavigator showOpenInCodeSandbox={false} />
         </SandpackLayout>
       </div>
 
@@ -201,6 +313,8 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
         onTriggerBreakMode={() => coach.triggerBreakMode(code)}
         onRequestGuidedBuild={(feature) => coach.requestGuidedBuild(feature, code)}
       />
+
+      <FloatingPreview />
 
       {coach.explanation && (
         <ExplainDrawer
@@ -224,13 +338,15 @@ function MentorWorkspace({ project }: { project: GeneratedProject }) {
         />
       )}
 
-      {coach.guidedPlan && (
-        <ProgressiveReveal
-          heading={`Guided build: ${coach.guidedPlan.featureSummary}`}
-          steps={coach.guidedPlan.steps.map((s) => ({ title: s.title, body: s.guidance, codeHint: s.codeHint }))}
-          finalLabel="What the finished feature looks like"
-          finalContent={coach.guidedPlan.finalSolutionNote}
+      {coach.guidedPlan && coach.guidedMode && (
+        <GuidedBuildPanel
+          plan={coach.guidedPlan}
+          mode={coach.guidedMode}
+          isApplying={coach.isApplyingGuided}
+          onApply={applyGuidedBuildNow}
+          onStartTutor={coach.startGuidedTutor}
           onClose={coach.dismissGuidedPlan}
+          onHighlightAnchor={highlightAnchorInEditor}
         />
       )}
 
