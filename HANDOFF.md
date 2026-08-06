@@ -166,9 +166,15 @@ src/
   any behavioral change by actually running the dev server and testing the real
   interaction in a browser — this project has repeatedly shipped "compiles clean" code
   that didn't work at runtime.
-- No live Groq API key has been used to test full AI *responses* yet (only that every
-  AI-calling path correctly reaches the API-key-required flow instead of failing
-  silently) — treat actual model output quality/shape as unverified until tested with
-  a real key.
 - Deployed to Vercel from the `main` branch (project: `moksh-personal/code-coach`).
   GitHub repo: `patelmoksh6875-creator/CodeCoach`.
+
+## 7. Status
+
+v1 of the rebuild is confirmed working end-to-end with a real Groq API key — project
+generation, live preview, highlight-to-explain, live-edit feedback, break mode, and
+guided build have all been exercised with real AI responses, not just the "reaches the
+API-key modal" plumbing check from the previous session. Treat everything in Section 5
+as genuinely fixed, not just wired-up.
+
+Next phase: v2 feature design and further bug fixing, building on this architecture.
