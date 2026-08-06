@@ -1,23 +1,12 @@
-export interface ProjectFile {
-  name: string;
-  language: 'html' | 'css' | 'javascript' | 'json';
-  content: string;
-}
-
+/** A single generated project file, keyed by Sandpack-style path (e.g. "/App.js"). */
 export interface FileMap {
-  [fileName: string]: ProjectFile;
+  [path: string]: string;
 }
 
 export interface GeneratedProject {
-  projectName: string;
+  title: string;
   description: string;
-  entryPoint: string;
+  /** Sandpack path of the file that should be open/active by default, e.g. "/App.js" */
+  entryFile: string;
   files: FileMap;
-}
-
-export interface SandboxConsoleMessage {
-  type: 'log' | 'error' | 'warn';
-  message: string;
-  lineNumber?: number;
-  colNumber?: number;
 }
