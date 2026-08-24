@@ -1,7 +1,7 @@
 import Groq from 'groq-sdk';
 
 const STORAGE_KEY = 'codecoach_groq_api_key';
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = 'openai/gpt-oss-120b';
 
 export class MissingApiKeyError extends Error {
   constructor() {
