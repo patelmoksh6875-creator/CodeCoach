@@ -1,4 +1,5 @@
 import Groq from 'groq-sdk';
+import { APIError } from 'groq-sdk/core/error';
 
 const STORAGE_KEY = 'codecoach_groq_api_key';
 const MODEL = 'openai/gpt-oss-120b';
@@ -72,6 +73,13 @@ export class AIService {
       });
       raw = response.choices[0]?.message?.content ?? '';
     } catch (err) {
+      if (err instanceof APIError) {
+        const groqMessage = (err.error as { error?: { message?: string } } | undefined)?.error?.message;
+        throw new AIRequestError(
+          `Groq request failed (${err.status ?? 'network error'}): ${groqMessage ?? err.message}`,
+          err,
+        );
+      }
       throw new AIRequestError('The request to Groq failed.', err);
     }
 
